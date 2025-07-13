@@ -1,4 +1,4 @@
-# app.py (Updated with new UI layout)
+# app.py (Updated with Pagination and Column Width Adjustments)
 import streamlit as st
 import pandas as pd
 from data_loader import get_master_dataframe
@@ -66,39 +66,46 @@ if len(date_range) == 2:
     start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
     filtered_df = filtered_df[filtered_df['date_updated'].between(start_date, end_date)]
 
+# --- Pagination Logic ---
+PAGE_SIZE = 25
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = 1
+
+total_results = len(filtered_df)
+total_pages = (total_results // PAGE_SIZE) + (1 if total_results % PAGE_SIZE > 0 else 0)
+start_index = (st.session_state.current_page - 1) * PAGE_SIZE
+end_index = start_index + PAGE_SIZE
+paginated_df = filtered_df.sort_values(by="date_updated", ascending=False).iloc[start_index:end_index]
+
 # --- Main Panel ---
 st.title("🔬 TCIA Dataset Explorer")
 st.markdown("An interactive tool to filter and find datasets from The Cancer Imaging Archive.")
-st.write(f"**Found {len(filtered_df)} matching datasets.**")
+st.write(f"**Found {total_results} matching datasets.**")
 st.markdown("---")
 
-if filtered_df.empty:
+if paginated_df.empty:
     st.warning("No datasets match the current filter criteria. Please broaden your search.")
 else:
-    for _, row in filtered_df.sort_values(by="date_updated", ascending=False).iterrows():
-        # 2. New title format
+    for _, row in paginated_df.iterrows():
         display_title = f"{row.get('short_title', '')} | {row['title']}" if row.get('short_title') else row['title']
         st.markdown(f"### [{display_title}]({row['link']})")
 
-        # 3 & 4. New 5-column metadata row
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # 2. Adjusted column widths
+        col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 1, 1.5])
         col1.markdown(f"**DOI:** `{row.get('doi', 'N/A')}`")
         col2.markdown(f"**Program:** {format_tags(row.get('program'))}")
         col3.markdown(f"**Type:** `{row['dataset_type']}`")
         col4.markdown(f"**Subjects:** `{row['number_of_subjects']}`")
         col5.markdown(f"**Updated:** `{row['date_updated'].strftime('%Y-%m-%d')}`")
 
-        # 3. New Data Type / Supporting Data row
         colA, colB = st.columns(2)
         colA.markdown(f"**Data Type(s):** {format_tags(row.get('data_types'))}")
         colB.markdown(f"**Supporting Data:** {format_tags(row.get('supporting_data'))}")
 
         st.markdown(f"**Cancer Type(s):** {format_tags(row.get('cancer_types'))}")
         st.markdown(f"**Cancer Location(s):** {format_tags(row.get('cancer_locations'))}")
-        # 5. New Related Datasets field
         st.markdown(f"**Related Datasets:** {format_tags(row.get('related_datasets'))}")
 
-        # 1. Citation moved into expander
         if row.get('citation') or row.get('summary'):
             with st.expander("View Citation and Abstract"):
                 if row.get('citation'):
@@ -108,3 +115,15 @@ else:
                     st.markdown(f"**Abstract:** {row['summary']}")
 
         st.markdown("---")
+
+    # --- Pagination Controls Display ---
+    st.write(f"Page {st.session_state.current_page} of {total_pages}")
+    prev_col, next_col = st.columns(2)
+
+    if prev_col.button("⬅️ Previous Page", use_container_width=True, disabled=(st.session_state.current_page <= 1)):
+        st.session_state.current_page -= 1
+        st.rerun()
+
+    if next_col.button("Next Page ➡️", use_container_width=True, disabled=(st.session_state.current_page >= total_pages)):
+        st.session_state.current_page += 1
+        st.rerun()
