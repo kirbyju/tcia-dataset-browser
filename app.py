@@ -91,7 +91,7 @@ else:
         st.markdown(f"### [{display_title}]({row['link']})")
 
         # 2. Adjusted column widths
-        col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 1, 1.5])
+        col1, col2, col3, col4, col5 = st.columns([1.5, 1, 1.5, .75, 1.5])
         col1.markdown(f"**DOI:** `{row.get('doi', 'N/A')}`")
         col2.markdown(f"**Program:** {format_tags(row.get('program'))}")
         col3.markdown(f"**Type:** `{row['dataset_type']}`")
