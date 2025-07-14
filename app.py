@@ -1,9 +1,13 @@
-# app.py (Updated to display Share URL dynamically)
+# app.py (Updated with configurable BASE_URL)
 import streamlit as st
 import pandas as pd
 from data_loader import get_master_dataframe
 import datetime
 import numpy as np
+
+# --- CONFIGURATION ---
+# 1. Base URL is now a configurable constant at the top of the script.
+BASE_URL = "https://tcia-streamlit.duckdns.org/dataset-browser/"
 
 # --- Helper Functions ---
 def get_unique_values_from_column(df, column_name):
@@ -97,9 +101,9 @@ if date_range != (min_date, max_date):
     share_params['date_range'] = f"{date_range[0].strftime('%Y-%m-%d')},{date_range[1].strftime('%Y-%m-%d')}"
 
 if share_params:
-    base_url = "http://localhost:8501" # This should be updated if deployed
     query_string = "&".join([f"{key}={','.join(value) if isinstance(value, list) else value}" for key, value in share_params.items()])
-    share_url = f"{base_url}?{query_string}"
+    # 2. Use the configurable BASE_URL constant here
+    share_url = f"{BASE_URL}?{query_string}"
     st.markdown("**Share this query:**")
     st.code(share_url)
 
