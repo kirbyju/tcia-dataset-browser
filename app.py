@@ -1,4 +1,4 @@
-# app.py (Updated with configurable BASE_URL)
+# app.py (Corrected with robust single-mask filtering)
 import streamlit as st
 import pandas as pd
 from data_loader import get_master_dataframe
@@ -6,7 +6,6 @@ import datetime
 import numpy as np
 
 # --- CONFIGURATION ---
-# 1. Base URL is now a configurable constant at the top of the script.
 BASE_URL = "https://tcia-streamlit.duckdns.org/dataset-browser/"
 
 # --- Helper Functions ---
@@ -68,29 +67,42 @@ default_dates = defaults.get('date_range', [f"{min_date},{max_date}"])[0].split(
 default_date_range = (datetime.datetime.strptime(default_dates[0], '%Y-%m-%d').date(), datetime.datetime.strptime(default_dates[1], '%Y-%m-%d').date()) if len(default_dates) == 2 else (min_date, max_date)
 date_range = st.sidebar.date_input("Date Updated", default_date_range, min_date, max_date)
 
-# --- Filtering Logic ---
-filtered_df = df.dropna(subset=['date_updated']).copy()
+# --- ROBUST FILTERING LOGIC ---
+# Start with a mask that includes all rows
+final_mask = pd.Series(True, index=df.index)
+
+# Apply free-text search
 if search_query:
     search_cols = ['title', 'short_title', 'summary', 'citation', 'program', 'data_types', 'cancer_types', 'cancer_locations']
-    filtered_df['search_text'] = filtered_df[search_cols].astype(str).agg(' '.join, axis=1)
-    filtered_df = filtered_df[filtered_df['search_text'].str.contains(search_query, case=False, na=False)]
+    existing_search_cols = [col for col in search_cols if col in df.columns]
+    search_text = df[existing_search_cols].astype(str).agg(' '.join, axis=1)
+    final_mask &= search_text.str.contains(search_query, case=False, na=False)
+
+# Apply categorical filters
 for column, selected_values in selected_filters.items():
     if selected_values:
         if df[column].apply(lambda x: isinstance(x, list)).any():
-            filtered_df = filtered_df[filtered_df[column].apply(lambda lst: any(v in selected_values for v in lst))]
+            mask = df[column].apply(lambda lst: any(v in selected_values for v in lst))
         else:
-            filtered_df = filtered_df[filtered_df[column].isin(selected_values)]
-filtered_df = filtered_df[filtered_df['number_of_subjects'].between(subject_range[0], subject_range[1])]
+            mask = df[column].isin(selected_values)
+        final_mask &= mask
+
+# Apply range filters
+final_mask &= df['number_of_subjects'].between(subject_range[0], subject_range[1])
 if len(date_range) == 2:
-    start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
-    filtered_df = filtered_df[filtered_df['date_updated'].between(start_date, end_date)]
+    # Ensure we handle NaT dates gracefully
+    start_date = pd.to_datetime(date_range[0])
+    end_date = pd.to_datetime(date_range[1])
+    final_mask &= df['date_updated'].between(start_date, end_date, inclusive='both')
+
+# Apply the final combined mask to the original DataFrame
+filtered_df = df[final_mask]
 
 # --- Main Panel ---
 st.title("🔬 TCIA Dataset Explorer")
 st.markdown("An interactive tool to filter and find datasets from The Cancer Imaging Archive.")
 st.write(f"**Found {len(filtered_df)} matching datasets.**")
 
-# --- Generate and Display Share URL ---
 share_params = {}
 if search_query: share_params['q'] = search_query
 for column, selected_values in selected_filters.items():
@@ -102,14 +114,12 @@ if date_range != (min_date, max_date):
 
 if share_params:
     query_string = "&".join([f"{key}={','.join(value) if isinstance(value, list) else value}" for key, value in share_params.items()])
-    # 2. Use the configurable BASE_URL constant here
     share_url = f"{BASE_URL}?{query_string}"
     st.markdown("**Share this query:**")
     st.code(share_url)
 
 st.markdown("---")
 
-# Pagination logic
 PAGE_SIZE = 25
 if 'current_page' not in st.session_state: st.session_state.current_page = 1
 total_results = len(filtered_df)
