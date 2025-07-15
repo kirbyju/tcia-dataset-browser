@@ -1,0 +1,35 @@
+name: Update Parquet Files
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight (UTC)
+  workflow_dispatch:      # Allows manual trigger from GitHub UI
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run sync_data.py
+        run: python sync_data.py
+
+      - name: Commit parquet updates
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add tcia_master_data.parquet citations_cache.parquet
+          git diff --cached --quiet || (git commit -m "Auto-update .parquet files" && git push)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
