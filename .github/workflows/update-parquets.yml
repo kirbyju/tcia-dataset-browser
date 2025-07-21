@@ -9,6 +9,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -27,8 +30,8 @@ jobs:
 
       - name: Commit parquet updates
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add tcia_master_data.parquet citations_cache.parquet
       
           if git diff --cached --quiet; then
