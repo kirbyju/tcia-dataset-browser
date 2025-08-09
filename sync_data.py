@@ -57,7 +57,7 @@ def main():
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
         'related_collection': 'related_collection', 'related_analysis_results': 'related_analysis_results',
-        'access_type': 'collection_page_accessibility', 'downloads': 'collection_downloads'
+        'access_type': 'collection_page_accessibility', 'collection_downloads': 'downloads'
     }
     analysis_col_map = {
         'id': 'id', 'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
@@ -65,7 +65,7 @@ def main():
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'supporting_data', 'program': 'program',
         'related_collections': 'related_collections', 'related_analysis_results': 'related_analysis_results',
-        'access_type': 'result_page_accessibility', 'downloads': 'result_downloads'
+        'access_type': 'result_page_accessibility', 'result_downloads': 'downloads'
     }
 
     collections_df = pd.DataFrame([ {dest: row.get(src) for dest, src in collection_col_map.items()} for _, row in raw_collections_df.iterrows() ])
