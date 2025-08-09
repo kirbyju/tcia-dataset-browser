@@ -42,7 +42,7 @@ st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout=
 
 # --- Load and Prepare Data ---
 df = get_master_dataframe()
-list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
+list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets', 'downloads_info']
 for col in list_cols:
     if col in df.columns:
         df[col] = df[col].apply(lambda x: list(x) if isinstance(x, np.ndarray) else x if isinstance(x, list) else [])
