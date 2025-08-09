@@ -23,6 +23,20 @@ def format_tags(tags_list):
     if not tags_list: return "N/A"
     return " | ".join(f"`{tag}`" for tag in tags_list)
 
+def get_unique_download_values(downloads_info, key):
+    if not isinstance(downloads_info, list) or not downloads_info:
+        return []
+    values = set()
+    for download in downloads_info:
+        if isinstance(download, dict) and download.get(key):
+            # Value could be a list or a single item
+            item = download[key]
+            if isinstance(item, list):
+                values.update(val for val in item if val)
+            else:
+                values.add(item)
+    return sorted(list(values))
+
 # --- Page Configuration ---
 st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout="wide")
 
@@ -33,6 +47,9 @@ for col in list_cols:
     if col in df.columns:
         df[col] = df[col].apply(lambda x: list(x) if isinstance(x, np.ndarray) else x if isinstance(x, list) else [])
 df['date_updated'] = pd.to_datetime(df['date_updated'], errors='coerce')
+
+# --- Create a lookup dictionary for related datasets ---
+id_to_title = pd.Series(df.short_title.values, index=df.id).to_dict()
 
 # --- Process URL Query Parameters to set defaults ---
 query_params = st.query_params.to_dict()
@@ -143,21 +160,54 @@ else:
         col4.markdown(f"**Subjects:** `{row['number_of_subjects']}`")
         col5.markdown(f"**Updated:** `{row['date_updated'].strftime('%Y-%m-%d')}`")
 
+        # --- Download-derived info ---
+        downloads_info = row.get('downloads_info', [])
+        data_types = get_unique_download_values(downloads_info, 'data_type')
+        data_categories = get_unique_download_values(downloads_info, 'download_type')
+        licenses = get_unique_download_values(downloads_info, 'data_license')
+
         colA, colB = st.columns(2)
-        colA.markdown(f"**Data Type(s):** {format_tags(row.get('data_types'))}")
+        colA.markdown(f"**Data Type(s):** {format_tags(data_types)}")
         colB.markdown(f"**Supporting Data:** {format_tags(row.get('supporting_data'))}")
+
+        colC, colD = st.columns(2)
+        colC.markdown(f"**Data Categories:** {format_tags(data_categories)}")
+        colD.markdown(f"**Licenses:** {format_tags(licenses)}")
+
 
         st.markdown(f"**Cancer Type(s):** {format_tags(row.get('cancer_types'))}")
         st.markdown(f"**Cancer Location(s):** {format_tags(row.get('cancer_locations'))}")
-        st.markdown(f"**Related Datasets:** {format_tags(row.get('related_datasets'))}")
 
-        if row.get('citation') or row.get('summary'):
-            with st.expander("View Citation and Abstract"):
+        related_ids = row.get('related_datasets', [])
+        related_titles = [id_to_title.get(rid, f"ID: {rid}") for rid in related_ids]
+        st.markdown(f"**Related Datasets:** {format_tags(related_titles)}")
+
+        if row.get('citation') or row.get('summary') or downloads_info:
+            with st.expander("View Citation, Abstract, and Downloads"):
                 if row.get('citation'):
                     st.markdown(f"**Citation:** {row['citation']}")
-                    if row.get('summary'): st.markdown("---")
                 if row.get('summary'):
+                    if row.get('citation'): st.markdown("---")
                     st.markdown(f"**Abstract:** {row['summary']}")
+
+                if downloads_info:
+                    if row.get('citation') or row.get('summary'): st.markdown("---")
+                    st.markdown("**Available Downloads:**")
+                    for d in downloads_info:
+                        title = d.get('download_title', 'N/A')
+                        url = d.get('download_url', '')
+                        st.markdown(f"- **[{title}]({url})**")
+
+                        details_cols = st.columns([2,1,1,1])
+                        details_cols[0].markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;*License:* `{d.get('data_license', 'N/A')}`")
+                        details_cols[1].markdown(f"*Type:* `{d.get('download_type', 'N/A')}`")
+                        details_cols[2].markdown(f"*Size:* `{d.get('download_size', 'N/A')} {d.get('download_size_unit', '')}`")
+                        details_cols[3].markdown(f"*Updated:* `{d.get('date_updated', 'N/A')}`")
+
+                        if d.get('subjects'):
+                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;*Subjects:* `{d.get('subjects')}`")
+                        if d.get('download_requirements'):
+                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;*Requirements:* `{d.get('download_requirements')}`")
         st.markdown("---")
 
     st.write(f"Page {st.session_state.current_page} of {total_pages}")

@@ -43,6 +43,7 @@ def main():
     try:
         raw_collections_df = wordpress.getCollections(format='df')
         raw_analyses_df = wordpress.getAnalyses(format='df')
+        raw_downloads_df = wordpress.getDownloads(format='df')
         datacite_df = datacite.getDoi()
         print("Successfully fetched all data from APIs.")
     except Exception as e:
@@ -51,20 +52,20 @@ def main():
 
     print("Processing and standardizing API data...")
     collection_col_map = {
-        'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
+        'id': 'id', 'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
         'doi': 'collection_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
         'related_collection': 'related_collection', 'related_analysis_results': 'related_analysis_results',
-        'access_type': 'collection_page_accessibility'
+        'access_type': 'collection_page_accessibility', 'downloads': 'collection_downloads'
     }
     analysis_col_map = {
-        'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
+        'id': 'id', 'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
         'doi': 'result_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'supporting_data', 'program': 'program',
         'related_collections': 'related_collections', 'related_analysis_results': 'related_analysis_results',
-        'access_type': 'result_page_accessibility'
+        'access_type': 'result_page_accessibility', 'downloads': 'result_downloads'
     }
 
     collections_df = pd.DataFrame([ {dest: row.get(src) for dest, src in collection_col_map.items()} for _, row in raw_collections_df.iterrows() ])
@@ -84,6 +85,34 @@ def main():
     doi_to_description_df['doi_lower'] = doi_to_description_df['DOI'].str.lower()
     master_df = pd.merge(master_df, doi_to_description_df[['doi_lower', 'Description']], on='doi_lower', how='left')
     master_df = master_df.rename(columns={'Description': 'summary'})
+
+    print("Integrating download data...")
+    master_df['collection_downloads'] = master_df['collection_downloads'].fillna('[]')
+    master_df['result_downloads'] = master_df['result_downloads'].fillna('[]')
+    master_df['downloads'] = master_df['collection_downloads'].apply(parse_string_to_list) + master_df['result_downloads'].apply(parse_string_to_list)
+
+    # Prepare downloads dataframe for join
+    downloads_df = raw_downloads_df.set_index('id')
+    download_cols_to_keep = [
+        'download_requirements', 'download_size', 'download_title', 'data_license',
+        'download_size_unit', 'download_type', 'download_url', 'search_url', 'subjects',
+        'data_type', 'study_count', 'file_type', 'series_count', 'image_count', 'date_updated'
+    ]
+    # Ensure all columns exist, fill with NA if not
+    for col in download_cols_to_keep:
+        if col not in downloads_df.columns:
+            downloads_df[col] = pd.NA
+
+    def get_download_details(ids):
+        if not ids: return []
+        # Ensure IDs are integers for matching
+        valid_ids = [int(i) for i in ids if str(i).isdigit()]
+        # Retrieve records, handling cases where ID might not be in the index
+        records = downloads_df.loc[downloads_df.index.intersection(valid_ids), download_cols_to_keep]
+        return records.to_dict('records')
+
+    master_df['downloads_info'] = master_df['downloads'].apply(get_download_details)
+    print("Download data integration complete.")
 
     # Simplified Citation Caching Logic
     if os.path.exists(CITATION_CACHE_FILE):
@@ -127,11 +156,13 @@ def main():
 
     master_df.fillna('', inplace=True)
     final_cols = [
-        'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
+        'id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
         'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
-        'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type'
+        'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
+        'downloads_info'
     ]
-    master_df = master_df[master_df.columns.intersection(final_cols)]
+    # Reorder columns for consistency and drop columns not in final_cols
+    master_df = master_df.reindex(columns=final_cols, fill_value='')
     master_df.to_parquet(MASTER_DATA_FILE, index=False)
     print(f"\n--- SUCCESS: Data saved to {MASTER_DATA_FILE} ---")
 
