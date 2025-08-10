@@ -151,25 +151,39 @@ def main():
 
     for col in ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program']:
         if col in master_df.columns: master_df[col] = master_df[col].apply(parse_string_to_list)
+    master_df['related_datasets'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
 
-    # Be more selective with fillna to avoid corrupting list-based columns
-    list_like_cols = ['downloads_info', 'cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
+
+    # --- Final Data Cleaning and Structuring ---
+    print("Finalizing data cleaning...")
+
+    # Define columns by type for safe cleaning
+    list_cols = ['downloads_info', 'cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
+
     for col in master_df.columns:
-        if col in list_like_cols:
-            # Ensure cells contain lists, not NaNs
+        if col in list_cols:
+            # For list-like columns, ensure every cell is a list. Replace non-lists (like NaN) with [].
             master_df[col] = master_df[col].apply(lambda x: x if isinstance(x, list) else [])
         else:
-            # Fill other columns with empty string
+            # For all other columns, fill any NaN values with an empty string.
             master_df[col] = master_df[col].fillna('')
 
+    # Define final columns for output
     final_cols = [
         'id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
         'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
         'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
         'downloads_info'
     ]
-    # Reorder columns for consistency and drop columns not in final_cols
-    master_df = master_df.reindex(columns=final_cols)
+
+    # Ensure all final columns exist before selecting them
+    for col in final_cols:
+        if col not in master_df.columns:
+            master_df[col] = '' # Default to empty string, or [] for list cols
+            if col in list_cols:
+                master_df[col] = [[] for _ in range(len(master_df))]
+
+    master_df = master_df[final_cols]
     master_df.to_parquet(MASTER_DATA_FILE, index=False)
     print(f"\n--- SUCCESS: Data saved to {MASTER_DATA_FILE} ---")
 
