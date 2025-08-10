@@ -51,6 +51,16 @@ df['date_updated'] = pd.to_datetime(df['date_updated'], errors='coerce')
 # --- Create a lookup dictionary for related datasets ---
 id_to_title = pd.Series(df.short_title.values, index=df.id).to_dict()
 
+# --- Pre-calculate filter options ---
+# Special handling for Data Type filter, which comes from downloads
+all_download_data_types = sorted(list(set(
+    dtype
+    for download_list in df['downloads_info'] if isinstance(download_list, list)
+    for download in download_list if isinstance(download, dict) and 'data_type' in download and download['data_type']
+    for dtype in (download['data_type'] if isinstance(download['data_type'], list) else [download['data_type']])
+)))
+
+
 # --- Process URL Query Parameters to set defaults ---
 query_params = st.query_params.to_dict()
 defaults = {key: value[0].split(',') if isinstance(value, list) else value.split(',') for key, value in query_params.items()}
@@ -67,7 +77,11 @@ FILTERS = [
 ]
 selected_filters = {}
 for label, column in FILTERS:
-    options = get_unique_values_from_column(df, column)
+    if column == "data_types":
+        options = all_download_data_types
+    else:
+        options = get_unique_values_from_column(df, column)
+
     if options:
         valid_defaults = [v for v in defaults.get(column, []) if v in options]
         selected_filters[column] = st.sidebar.multiselect(label, options, default=valid_defaults)
@@ -98,7 +112,20 @@ if search_query:
 # Apply categorical filters
 for column, selected_values in selected_filters.items():
     if selected_values:
-        if df[column].apply(lambda x: isinstance(x, list)).any():
+        if column == 'data_types':
+            def has_selected_data_type(downloads_list):
+                if not isinstance(downloads_list, list):
+                    return False
+                for download in downloads_list:
+                    if isinstance(download, dict):
+                        dtypes = download.get('data_type', [])
+                        if not isinstance(dtypes, list):
+                            dtypes = [dtypes]
+                        if any(dtype in selected_values for dtype in dtypes if dtype):
+                            return True
+                return False
+            mask = df['downloads_info'].apply(has_selected_data_type)
+        elif df[column].apply(lambda x: isinstance(x, list)).any():
             mask = df[column].apply(lambda lst: any(v in selected_values for v in lst))
         else:
             mask = df[column].isin(selected_values)
