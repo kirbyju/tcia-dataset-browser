@@ -152,7 +152,16 @@ def main():
     for col in ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program']:
         if col in master_df.columns: master_df[col] = master_df[col].apply(parse_string_to_list)
 
-    master_df.fillna('', inplace=True)
+    # Be more selective with fillna to avoid corrupting list-based columns
+    list_like_cols = ['downloads_info', 'cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
+    for col in master_df.columns:
+        if col in list_like_cols:
+            # Ensure cells contain lists, not NaNs
+            master_df[col] = master_df[col].apply(lambda x: x if isinstance(x, list) else [])
+        else:
+            # Fill other columns with empty string
+            master_df[col] = master_df[col].fillna('')
+
     final_cols = [
         'id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
         'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
@@ -160,7 +169,7 @@ def main():
         'downloads_info'
     ]
     # Reorder columns for consistency and drop columns not in final_cols
-    master_df = master_df.reindex(columns=final_cols, fill_value='')
+    master_df = master_df.reindex(columns=final_cols)
     master_df.to_parquet(MASTER_DATA_FILE, index=False)
     print(f"\n--- SUCCESS: Data saved to {MASTER_DATA_FILE} ---")
 
