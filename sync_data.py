@@ -43,9 +43,14 @@ def clean_list_of_dicts(lod):
             continue
         cleaned_dict = {}
         for k, v in d.items():
-            if pd.isna(v):
+            if isinstance(v, list):
+                # If the value is a list, clean each item in the list
+                cleaned_dict[k] = [None if pd.isna(item) else item for item in v]
+            elif pd.isna(v):
+                # If the value is a scalar NaN, replace with None
                 cleaned_dict[k] = None
             else:
+                # Otherwise, keep the value
                 cleaned_dict[k] = v
         cleaned_list.append(cleaned_dict)
     return cleaned_list
