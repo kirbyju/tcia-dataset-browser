@@ -34,6 +34,22 @@ def extract_renderer_title(series_val):
     except (ValueError, SyntaxError):
         return str(series_val)
 
+def clean_list_of_dicts(lod):
+    if not isinstance(lod, list):
+        return []
+    cleaned_list = []
+    for d in lod:
+        if not isinstance(d, dict):
+            continue
+        cleaned_dict = {}
+        for k, v in d.items():
+            if pd.isna(v):
+                cleaned_dict[k] = None
+            else:
+                cleaned_dict[k] = v
+        cleaned_list.append(cleaned_dict)
+    return cleaned_list
+
 def main():
     MASTER_DATA_FILE = "tcia_master_data.parquet"
     CITATION_CACHE_FILE = "citations_cache.parquet"
@@ -110,6 +126,7 @@ def main():
         return records.to_dict('records')
 
     master_df['downloads_info'] = master_df['downloads'].apply(get_download_details)
+    master_df['downloads_info'] = master_df['downloads_info'].apply(clean_list_of_dicts)
     print("Download data integration complete.")
 
     # Simplified Citation Caching Logic
