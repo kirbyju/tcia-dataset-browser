@@ -1,4 +1,4 @@
-# sync_data.py (Simplified to remove --force-recache)
+# sync_data.py
 import pandas as pd
 from tcia_utils import wordpress, datacite
 import ast
@@ -44,13 +44,10 @@ def clean_list_of_dicts(lod):
         cleaned_dict = {}
         for k, v in d.items():
             if isinstance(v, list):
-                # If the value is a list, clean each item in the list
                 cleaned_dict[k] = [None if pd.isna(item) else item for item in v]
             elif pd.isna(v):
-                # If the value is a scalar NaN, replace with None
                 cleaned_dict[k] = None
             else:
-                # Otherwise, keep the value
                 cleaned_dict[k] = v
         cleaned_list.append(cleaned_dict)
     return cleaned_list
@@ -73,7 +70,7 @@ def main():
 
     print("Processing and standardizing API data...")
     collection_col_map = {
-        'id': 'id', 'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
+        'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'collection_short_title',
         'doi': 'collection_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
@@ -81,7 +78,7 @@ def main():
         'access_type': 'collection_page_accessibility', 'downloads': 'collection_downloads'
     }
     analysis_col_map = {
-        'id': 'id', 'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
+        'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'result_short_title',
         'doi': 'result_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'supporting_data', 'program': 'program',
@@ -110,23 +107,20 @@ def main():
     print("Integrating download data...")
     master_df['downloads'] = master_df['downloads'].apply(parse_string_to_list)
 
-    # Prepare downloads dataframe for join
     downloads_df = raw_downloads_df.set_index('id')
     download_cols_to_keep = [
         'download_requirements', 'download_size', 'download_title', 'data_license',
         'download_size_unit', 'download_type', 'download_url', 'search_url', 'subjects',
         'data_type', 'study_count', 'file_type', 'series_count', 'image_count', 'date_updated'
     ]
-    # Ensure all columns exist, fill with NA if not
     for col in download_cols_to_keep:
         if col not in downloads_df.columns:
             downloads_df[col] = pd.NA
 
     def get_download_details(ids):
         if not ids: return []
-        # Ensure IDs are integers for matching
         valid_ids = [int(i) for i in ids if str(i).isdigit()]
-        # Retrieve records, handling cases where ID might not be in the index
+        if not valid_ids: return []
         records = downloads_df.loc[downloads_df.index.intersection(valid_ids), download_cols_to_keep]
         return records.to_dict('records')
 
@@ -134,12 +128,10 @@ def main():
     master_df['downloads_info'] = master_df['downloads_info'].apply(clean_list_of_dicts)
     print("Download data integration complete.")
 
-    # Simplified Citation Caching Logic
+    print("\nLoading existing citation cache.")
     if os.path.exists(CITATION_CACHE_FILE):
-        print("\nLoading existing citation cache.")
         citations_cache = pd.read_parquet(CITATION_CACHE_FILE)
     else:
-        print("\nCitation cache not found. A new one will be created.")
         citations_cache = pd.DataFrame(columns=['doi', 'citation'])
 
     master_df = pd.merge(master_df, citations_cache, on='doi', how='left')
@@ -171,37 +163,22 @@ def main():
         master_df[col] = master_df[col].apply(parse_string_to_list)
     master_df['related_datasets'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
 
-    for col in ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program']:
-        if col in master_df.columns: master_df[col] = master_df[col].apply(parse_string_to_list)
-    master_df['related_datasets'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
-
-
-    # --- Final Data Cleaning and Structuring ---
-    print("Finalizing data cleaning...")
-
-    # Define columns by type for safe cleaning
-    list_cols = ['downloads_info', 'cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
-
+    list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets', 'downloads_info']
     for col in master_df.columns:
         if col in list_cols:
-            # For list-like columns, ensure every cell is a list. Replace non-lists (like NaN) with [].
             master_df[col] = master_df[col].apply(lambda x: x if isinstance(x, list) else [])
         else:
-            # For all other columns, fill any NaN values with an empty string.
             master_df[col] = master_df[col].fillna('')
 
-    # Define final columns for output
     final_cols = [
         'id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
         'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
         'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
         'downloads_info'
     ]
-
-    # Ensure all final columns exist before selecting them
     for col in final_cols:
         if col not in master_df.columns:
-            master_df[col] = '' # Default to empty string, or [] for list cols
+            master_df[col] = ''
             if col in list_cols:
                 master_df[col] = [[] for _ in range(len(master_df))]
 
