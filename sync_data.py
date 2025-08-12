@@ -107,15 +107,15 @@ def main():
     print("Integrating download data...")
     master_df['downloads'] = master_df['downloads'].apply(parse_string_to_list)
 
-    downloads_df = raw_downloads_df.set_index('id')
+    # Prepare downloads dataframe for join, keeping only necessary columns
     download_cols_to_keep = [
         'download_requirements', 'download_size', 'download_title', 'data_license',
         'download_size_unit', 'download_type', 'download_url', 'search_url', 'subjects',
         'data_type', 'study_count', 'file_type', 'series_count', 'image_count', 'date_updated'
     ]
-    for col in download_cols_to_keep:
-        if col not in downloads_df.columns:
-            downloads_df[col] = pd.NA
+    cols_for_downloads = download_cols_to_keep + ['id']
+    existing_cols = [c for c in cols_for_downloads if c in raw_downloads_df.columns]
+    downloads_df = raw_downloads_df[existing_cols].set_index('id')
 
     def get_download_details(ids):
         if not ids: return []
