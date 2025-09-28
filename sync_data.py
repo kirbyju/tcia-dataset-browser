@@ -51,16 +51,16 @@ def main():
 
     print("Processing and standardizing API data...")
     collection_col_map = {
-        'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
-        'doi': 'collection_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
+        'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'short_title',
+        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
         'related_collection': 'related_collection', 'related_analysis_results': 'related_analysis_results',
         'access_type': 'collection_page_accessibility'
     }
     analysis_col_map = {
-        'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
-        'doi': 'result_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
+        'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'short_title',
+        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'supporting_data', 'program': 'program',
         'related_collections': 'related_collections', 'related_analysis_results': 'related_analysis_results',
@@ -117,10 +117,23 @@ def main():
         print("No new citations to fetch.")
 
     print("\nCleaning data and finalizing master DataFrame...")
+    # Create a mapping from dataset ID to its short title for readable related datasets
+    master_df['id'] = master_df['id'].astype(str)
+    id_to_title_map = master_df.set_index('id')['short_title'].to_dict()
+
+    def map_ids_to_titles(id_list, id_map):
+        if not isinstance(id_list, list): return []
+        # Look up each ID, ensuring it's a string for matching
+        return [id_map.get(str(r_id), f"ID:{r_id}") for r_id in id_list if r_id]
+
     for col in ['related_collection', 'related_collections', 'related_analysis_results']:
         if col not in master_df.columns: master_df[col] = [[] for _ in range(len(master_df))]
         master_df[col] = master_df[col].apply(parse_string_to_list)
-    master_df['related_datasets'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
+
+    master_df['related_datasets'] = (master_df['related_collection'] +
+                                     master_df['related_collections'] +
+                                     master_df['related_analysis_results'])
+    master_df['related_datasets'] = master_df['related_datasets'].apply(lambda x: map_ids_to_titles(x, id_to_title_map))
 
     for col in ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program']:
         if col in master_df.columns: master_df[col] = master_df[col].apply(parse_string_to_list)
