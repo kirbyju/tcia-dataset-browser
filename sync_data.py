@@ -50,6 +50,18 @@ def main():
         return
 
     print("Processing and standardizing API data...")
+
+    # --- Create a consolidated ID-to-Title mapping ---
+    # We build this map first so we can easily look up titles for related datasets
+    id_to_title_map = {}
+    for _, row in raw_collections_df.iterrows():
+        # Fallback from short_title to the main title if it's missing
+        title = row.get('short_title') or row.get('title', {}).get('rendered', f"ID: {row['id']}")
+        id_to_title_map[str(row['id'])] = title
+    for _, row in raw_analyses_df.iterrows():
+        title = row.get('short_title') or row.get('title', {}).get('rendered', f"ID: {row['id']}")
+        id_to_title_map[str(row['id'])] = title
+
     collection_col_map = {
         'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
         'doi': 'collection_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
@@ -120,7 +132,14 @@ def main():
     for col in ['related_collection', 'related_collections', 'related_analysis_results']:
         if col not in master_df.columns: master_df[col] = [[] for _ in range(len(master_df))]
         master_df[col] = master_df[col].apply(parse_string_to_list)
-    master_df['related_datasets'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
+
+    # Combine the related dataset IDs from the various fields
+    master_df['related_datasets_ids'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
+
+    # Use the map to convert IDs to titles
+    master_df['related_datasets'] = master_df['related_datasets_ids'].apply(
+        lambda ids: [id_to_title_map.get(str(id), f"ID: {id}") for id in ids]
+    )
 
     for col in ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program']:
         if col in master_df.columns: master_df[col] = master_df[col].apply(parse_string_to_list)
