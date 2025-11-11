@@ -28,7 +28,7 @@ st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout=
 
 # --- Load and Prepare Data ---
 df = get_master_dataframe()
-list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
+list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets', 'downloads']
 for col in list_cols:
     if col in df.columns:
         df[col] = df[col].apply(lambda x: list(x) if isinstance(x, np.ndarray) else x if isinstance(x, list) else [])
@@ -158,6 +158,50 @@ else:
                     if row.get('summary'): st.markdown("---")
                 if row.get('summary'):
                     st.markdown(f"**Abstract:** {row['summary']}")
+
+        if 'downloads' in row and isinstance(row['downloads'], list) and row['downloads']:
+            with st.expander("View Downloads"):
+                # Define the columns you want to display in the HTML table
+                display_columns = ["download_title", "data_license", "download_access", "data_type", "file_type", "download_size", "download_size_unit", "subjects", "study_count", "series_count", "image_count", "download_url", "search_url"]
+
+                # Start the HTML table structure
+                html_table = """
+                <table style="width:100%; border-collapse: collapse;">
+                    <tr style="background-color: #f2f2f2;">
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Title</th>
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Data License</th>
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Access</th>
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Data Type</th>
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">File Type</th>
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Size</th>
+                        <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Actions</th>
+                    </tr>
+                """
+
+                # Populate the table rows
+                for download in row['downloads']:
+                    html_table += "<tr>"
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download.get('download_title', 'N/A')}</td>"
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download.get('data_license', 'N/A')}</td>"
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download.get('download_access', 'N/A')}</td>"
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download.get('data_type', 'N/A')}</td>"
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download.get('file_type', 'N/A')}</td>"
+                    size = f"{download.get('download_size', '')} {download.get('download_size_unit', '')}".strip()
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{size if size else 'N/A'}</td>"
+
+                    # Actions column with buttons
+                    actions_html = ""
+                    if download.get('download_url'):
+                        actions_html += f'<a href="{download["download_url"]}" target="_blank" style="text-decoration: none;"><button style="margin: 2px; padding: 5px 10px;">Download</button></a>'
+                    if download.get('search_url'):
+                        actions_html += f'<a href="{download["search_url"]}" target="_blank" style="text-decoration: none;"><button style="margin: 2px; padding: 5px 10px;">Search</button></a>'
+
+                    html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{actions_html if actions_html else 'N/A'}</td>"
+                    html_table += "</tr>"
+
+                html_table += "</table>"
+                st.markdown(html_table, unsafe_allow_html=True)
+
         st.markdown("---")
 
     st.write(f"Page {st.session_state.current_page} of {total_pages}")

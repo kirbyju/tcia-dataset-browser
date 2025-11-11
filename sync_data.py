@@ -37,6 +37,7 @@ def extract_renderer_title(series_val):
 def main():
     MASTER_DATA_FILE = "tcia_master_data.parquet"
     CITATION_CACHE_FILE = "citations_cache.parquet"
+    DOWNLOADS_CACHE_FILE = "downloads_cache.parquet"
     print("--- Starting TCIA Data Sync ---")
 
     print("Fetching live data...")
@@ -44,6 +45,35 @@ def main():
         raw_collections_df = wordpress.getCollections(format='df')
         raw_analyses_df = wordpress.getAnalyses(format='df')
         datacite_df = datacite.getDoi()
+
+        print("Fetching and caching downloads data...")
+        fields = ["id", "date_updated", "download_title", "data_license", "download_access", "data_type", "file_type", "download_size", "download_size_unit", "subjects", "study_count", "series_count", "image_count", "download_type", "download_url", "search_url"]
+        downloads_df = wordpress.getDownloads(format='df', fields=fields)
+
+        # The API can return lists for 'download_size', which breaks parquet.
+        # Safely convert it to string to prevent type errors during caching.
+        if 'download_size' in downloads_df.columns:
+            downloads_df['download_size'] = downloads_df['download_size'].astype(str)
+        if 'data_license' in downloads_df.columns:
+            downloads_df['data_license'] = downloads_df['data_license'].astype(str)
+        if 'download_type' in downloads_df.columns:
+            downloads_df['download_type'] = downloads_df['download_type'].astype(str)
+        if 'subjects' in downloads_df.columns:
+            downloads_df['subjects'] = downloads_df['subjects'].astype(str)
+        if 'study_count' in downloads_df.columns:
+            downloads_df['study_count'] = downloads_df['study_count'].astype(str)
+        if 'series_count' in downloads_df.columns:
+            downloads_df['series_count'] = downloads_df['series_count'].astype(str)
+        if 'image_count' in downloads_df.columns:
+            downloads_df['image_count'] = downloads_df['image_count'].astype(str)
+        if 'data_type' in downloads_df.columns:
+            downloads_df['data_type'] = downloads_df['data_type'].astype(str)
+        if 'file_type' in downloads_df.columns:
+            downloads_df['file_type'] = downloads_df['file_type'].astype(str)
+
+        downloads_df.to_parquet(DOWNLOADS_CACHE_FILE, index=False)
+        print(f"-> Successfully cached {len(downloads_df)} download records.")
+
         print("Successfully fetched all data from APIs.")
     except Exception as e:
         print(f"FATAL ERROR: Could not fetch data. Details: {e}")
@@ -51,11 +81,8 @@ def main():
 
     print("Processing and standardizing API data...")
 
-    # --- Create a consolidated ID-to-Title mapping ---
-    # We build this map first so we can easily look up titles for related datasets
     id_to_title_map = {}
     for _, row in raw_collections_df.iterrows():
-        # Fallback from short_title to the main title if it's missing
         title = row.get('short_title') or row.get('title', {}).get('rendered', f"ID: {row['id']}")
         id_to_title_map[str(row['id'])] = title
     for _, row in raw_analyses_df.iterrows():
@@ -63,32 +90,63 @@ def main():
         id_to_title_map[str(row['id'])] = title
 
     collection_col_map = {
-        'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
+        'id': 'id', 'link': 'link', 'title': 'collection_title', 'short_title': 'collection_short_title',
         'doi': 'collection_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
         'related_collection': 'related_collection', 'related_analysis_results': 'related_analysis_results',
-        'access_type': 'collection_page_accessibility'
+        'access_type': 'collection_page_accessibility', 'collection_downloads': 'download_ids'
     }
     analysis_col_map = {
-        'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
+        'id': 'id', 'link': 'link', 'title': 'result_title', 'short_title': 'result_short_title',
         'doi': 'result_doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'supporting_data', 'program': 'program',
         'related_collections': 'related_collections', 'related_analysis_results': 'related_analysis_results',
-        'access_type': 'result_page_accessibility'
+        'access_type': 'result_page_accessibility', 'result_downloads': 'download_ids'
     }
 
     collections_df = pd.DataFrame([ {dest: row.get(src) for dest, src in collection_col_map.items()} for _, row in raw_collections_df.iterrows() ])
     collections_df['dataset_type'] = 'Collection'
+    if 'download_ids' in collections_df.columns:
+        collections_df['download_ids'] = collections_df['download_ids'].apply(parse_string_to_list)
+
     analyses_df = pd.DataFrame([ {dest: row.get(src) for dest, src in analysis_col_map.items()} for _, row in raw_analyses_df.iterrows() ])
     analyses_df['dataset_type'] = 'Analysis Result'
     analyses_df['supporting_data'] = [[] for _ in range(len(analyses_df))]
+    if 'download_ids' in analyses_df.columns:
+        analyses_df['download_ids'] = analyses_df['download_ids'].apply(parse_string_to_list)
 
     master_df = pd.concat([collections_df, analyses_df], ignore_index=True)
     master_df['title'] = master_df['title'].apply(extract_renderer_title)
     master_df['date_updated'] = pd.to_datetime(master_df['date_updated'], errors='coerce')
     master_df['number_of_subjects'] = pd.to_numeric(master_df['number_of_subjects'], errors='coerce').fillna(0).astype(int)
+
+    # --- Process and merge download data ---
+    print("\nProcessing and merging download data...")
+    if os.path.exists(DOWNLOADS_CACHE_FILE) and 'download_ids' in master_df.columns:
+        downloads_df = pd.read_parquet(DOWNLOADS_CACHE_FILE)
+        master_df = master_df.reset_index().rename(columns={'index': 'original_index'})
+
+        exploded_df = master_df.explode('download_ids')
+        exploded_df = exploded_df[exploded_df['download_ids'].notna() & (exploded_df['download_ids'] != '')]
+
+        if not exploded_df.empty:
+            exploded_df['download_ids'] = pd.to_numeric(exploded_df['download_ids'], errors='coerce')
+            downloads_df['id'] = pd.to_numeric(downloads_df['id'], errors='coerce')
+            merged_downloads = pd.merge(
+                exploded_df[['original_index', 'download_ids']], downloads_df,
+                left_on='download_ids', right_on='id', how='left'
+            ).dropna(subset=['id'])
+
+            if not merged_downloads.empty:
+                grouped_downloads = merged_downloads.groupby('original_index').apply(lambda x: x.to_dict('records')).rename('downloads')
+                master_df = pd.merge(master_df, grouped_downloads, on='original_index', how='left')
+
+    if 'downloads' not in master_df.columns:
+        master_df['downloads'] = [[] for _ in range(len(master_df))]
+    else:
+        master_df['downloads'] = master_df['downloads'].apply(lambda d: d if isinstance(d, list) else [])
 
     print("Merging DataCite abstracts...")
     doi_to_description_df = datacite_df[['DOI', 'Description']].copy()
@@ -97,7 +155,6 @@ def main():
     master_df = pd.merge(master_df, doi_to_description_df[['doi_lower', 'Description']], on='doi_lower', how='left')
     master_df = master_df.rename(columns={'Description': 'summary'})
 
-    # Simplified Citation Caching Logic
     if os.path.exists(CITATION_CACHE_FILE):
         print("\nLoading existing citation cache.")
         citations_cache = pd.read_parquet(CITATION_CACHE_FILE)
@@ -133,10 +190,8 @@ def main():
         if col not in master_df.columns: master_df[col] = [[] for _ in range(len(master_df))]
         master_df[col] = master_df[col].apply(parse_string_to_list)
 
-    # Combine the related dataset IDs from the various fields
     master_df['related_datasets_ids'] = master_df['related_collection'] + master_df['related_collections'] + master_df['related_analysis_results']
 
-    # Use the map to convert IDs to titles
     master_df['related_datasets'] = master_df['related_datasets_ids'].apply(
         lambda ids: [id_to_title_map.get(str(id), f"ID: {id}") for id in ids]
     )
@@ -148,7 +203,8 @@ def main():
     final_cols = [
         'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
         'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
-        'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type'
+        'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
+        'downloads'
     ]
     master_df = master_df[master_df.columns.intersection(final_cols)]
     master_df.to_parquet(MASTER_DATA_FILE, index=False)
