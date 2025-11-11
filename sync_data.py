@@ -94,7 +94,7 @@ def main():
     # Define the column mappings from the raw API data to our desired DataFrame columns
     collection_col_map = {
         'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'short_title',
-        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
+        'collection_doi': 'doi', 'date_updated': 'date_updated', 'subjects': 'number_of_subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
         'related_collection': 'related_collection', 'related_analysis_results': 'related_analysis_results',
@@ -102,7 +102,7 @@ def main():
     }
     analysis_col_map = {
         'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'short_title',
-        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
+        'result_doi': 'doi', 'date_updated': 'date_updated', 'subjects': 'number_of_subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'data_types', 'program': 'program',
         'related_collections': 'related_collections', 'related_analysis_results': 'related_analysis_results',
@@ -110,10 +110,10 @@ def main():
     }
 
     # Create and process the collections and analyses DataFrames
-    collections_df = pd.DataFrame([ {dest: row.get(src) for dest, src in collection_col_map.items()} for _, row in raw_collections_df.iterrows() ])
+    collections_df = pd.DataFrame([ {dest: row.get(src) for src, dest in collection_col_map.items()} for _, row in raw_collections_df.iterrows() ])
     collections_df['dataset_type'] = 'Collection'
 
-    analyses_df = pd.DataFrame([ {dest: row.get(src) for dest, src in analysis_col_map.items()} for _, row in raw_analyses_df.iterrows() ])
+    analyses_df = pd.DataFrame([ {dest: row.get(src) for src, dest in analysis_col_map.items()} for _, row in raw_analyses_df.iterrows() ])
     analyses_df['dataset_type'] = 'Analysis Result'
 
     # Concatenate into a master DataFrame
