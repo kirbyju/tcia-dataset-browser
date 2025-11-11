@@ -94,7 +94,7 @@ def main():
     # Define the column mappings from the raw API data to our desired DataFrame columns
     collection_col_map = {
         'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'short_title',
-        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'number_of_subjects',
+        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'supporting_data': 'supporting_data', 'data_types': 'data_types', 'program': 'program',
         'related_collection': 'related_collection', 'related_analysis_results': 'related_analysis_results',
@@ -102,7 +102,7 @@ def main():
     }
     analysis_col_map = {
         'id': 'id', 'link': 'link', 'title': 'title', 'short_title': 'short_title',
-        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'number_of_subjects',
+        'doi': 'doi', 'date_updated': 'date_updated', 'number_of_subjects': 'subjects',
         'cancer_types': 'cancer_types', 'cancer_locations': 'cancer_locations',
         'data_types': 'data_types', 'program': 'program',
         'related_collections': 'related_collections', 'related_analysis_results': 'related_analysis_results',

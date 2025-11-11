@@ -1,7 +1,7 @@
 # app.py (Corrected with robust single-mask filtering)
 import streamlit as st
 import pandas as pd
-from data_loader import get_master_dataframe, get_downloads_dataframe
+from data_loader import get_master_dataframe
 import datetime
 import numpy as np
 
@@ -28,8 +28,6 @@ st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout=
 
 # --- Load and Prepare Data ---
 df = get_master_dataframe()
-downloads_df = get_downloads_dataframe()
-
 list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
 for col in list_cols:
     if col in df.columns:
@@ -160,49 +158,6 @@ else:
                     if row.get('summary'): st.markdown("---")
                 if row.get('summary'):
                     st.markdown(f"**Abstract:** {row['summary']}")
-
-        # Correctly look up downloads from the separate downloads_df
-        download_ids = row.get('collection_downloads', []) + row.get('result_downloads', [])
-        if download_ids:
-            # Filter the downloads_df to get the downloads for the current dataset
-            dataset_downloads = downloads_df[downloads_df['id'].isin(download_ids)]
-            if not dataset_downloads.empty:
-                with st.expander("View Downloads"):
-                    html_table = """
-                    <table style="width:100%; border-collapse: collapse;">
-                        <tr style="background-color: #f2f2f2;">
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Title</th>
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Data License</th>
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Access</th>
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Data Type</th>
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">File Type</th>
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Size</th>
-                            <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Actions</th>
-                        </tr>
-                    """
-
-                    for _, download_row in dataset_downloads.iterrows():
-                        html_table += "<tr>"
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download_row.get('download_title', 'N/A')}</td>"
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download_row.get('data_license', 'N/A')}</td>"
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download_row.get('download_access', 'N/A')}</td>"
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download_row.get('data_type', 'N/A')}</td>"
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{download_row.get('file_type', 'N/A')}</td>"
-                        size = f"{download_row.get('download_size', '')} {download_row.get('download_size_unit', '')}".strip()
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{size if size else 'N/A'}</td>"
-
-                        actions_html = ""
-                        if download_row.get('download_url'):
-                            actions_html += f'<a href="{download_row["download_url"]}" target="_blank" style="text-decoration: none;"><button style="margin: 2px; padding: 5px 10px;">Download</button></a>'
-                        if download_row.get('search_url'):
-                            actions_html += f'<a href="{download_row["search_url"]}" target="_blank" style="text-decoration: none;"><button style="margin: 2px; padding: 5px 10px;">Search</button>a>'
-
-                        html_table += f"<td style='padding: 8px; border: 1px solid #ddd;'>{actions_html if actions_html else 'N/A'}</td>"
-                        html_table += "</tr>"
-
-                    html_table += "</table>"
-                    st.markdown(html_table, unsafe_allow_html=True)
-
         st.markdown("---")
 
     st.write(f"Page {st.session_state.current_page} of {total_pages}")

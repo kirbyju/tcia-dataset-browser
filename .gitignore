@@ -180,5 +180,3 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .DS_Store
-
-# Ignore generated data files
