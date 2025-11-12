@@ -160,7 +160,7 @@ else:
                 if row.get('summary'):
                     st.markdown(f"**Abstract:** {row['summary']}")
 
-        download_ids = row.get('collection_downloads', []) + row.get('result_downloads', [])
+        download_ids = list(row.get('collection_downloads', [])) + list(row.get('result_downloads', []))
         # Ensure IDs are strings for comparison, matching the parquet file's likely format
         download_ids_str = [str(d_id) for d_id in download_ids if d_id]
 
