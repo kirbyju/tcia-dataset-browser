@@ -1,7 +1,7 @@
 # app.py (Corrected with robust single-mask filtering)
 import streamlit as st
 import pandas as pd
-from data_loader import get_master_dataframe
+from data_loader import get_master_dataframe, get_downloads_dataframe
 import datetime
 import numpy as np
 
@@ -28,6 +28,7 @@ st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout=
 
 # --- Load and Prepare Data ---
 df = get_master_dataframe()
+downloads_df = get_downloads_dataframe()
 list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
 for col in list_cols:
     if col in df.columns:
@@ -158,6 +159,41 @@ else:
                     if row.get('summary'): st.markdown("---")
                 if row.get('summary'):
                     st.markdown(f"**Abstract:** {row['summary']}")
+
+        download_ids = list(row.get('collection_downloads', [])) + list(row.get('result_downloads', []))
+        # Ensure IDs are strings for comparison, matching the parquet file's likely format
+        download_ids_str = [str(d_id) for d_id in download_ids if d_id]
+
+        if download_ids_str:
+            # Filter the downloads_df for the relevant IDs
+            relevant_downloads = downloads_df[downloads_df['id'].astype(str).isin(download_ids_str)]
+
+            if not relevant_downloads.empty:
+                with st.expander("View Downloadable Files"):
+                    # Create a display-friendly dataframe
+                    display_downloads = relevant_downloads[['download_title', 'download_size', 'download_size_unit', 'file_type', 'download_url', 'search_url']].copy()
+                    display_downloads.rename(columns={
+                        'download_title': 'Title', 'download_size': 'Size',
+                        'download_size_unit': 'Unit', 'file_type': 'Type',
+                        'download_url': 'Download Link', 'search_url': 'Search Link'
+                    }, inplace=True)
+
+                    # Generate HTML for the table with clickable links
+                    html = "<table>"
+                    html += "<tr><th>Title</th><th>Size</th><th>Type</th><th>Links</th></tr>"
+                    for _, d_row in display_downloads.iterrows():
+                        links = []
+                        if d_row['Download Link']:
+                            links.append(f'<a href="{d_row["Download Link"]}" target="_blank">Download</a>')
+                        if d_row['Search Link']:
+                            links.append(f'<a href="{d_row["Search Link"]}" target="_blank">Search</a>')
+
+                        links_html = " | ".join(links)
+                        html += f"<tr><td>{d_row['Title']}</td><td>{d_row['Size']} {d_row['Unit']}</td><td>{d_row['Type']}</td><td>{links_html}</td></tr>"
+                    html += "</table>"
+
+                    st.markdown(html, unsafe_allow_html=True)
+
         st.markdown("---")
 
     st.write(f"Page {st.session_state.current_page} of {total_pages}")

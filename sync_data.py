@@ -72,10 +72,13 @@ def main():
             "id", "date_updated", "download_title", "data_license", "download_access",
             "data_type", "file_type", "download_size", "download_size_unit", "subjects",
             "study_count", "series_count", "image_count", "download_type",
-            "download_url", "search_url"
+            "download_url", "search_url", "download_file"
         ]
         downloads_df = wordpress.getDownloads(format='df', fields=fields)
 
+        # drop download_file column
+        downloads_df = downloads_df.drop(columns=['download_file'])
+        
         for col in ['download_size', 'data_license', 'download_type', 'subjects', 'study_count',
                     'series_count', 'image_count', 'data_type', 'file_type']:
             if col in downloads_df.columns:
