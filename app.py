@@ -19,6 +19,8 @@ def get_unique_values_from_column(df, column_name):
     return sorted(list(unique_values - {''}))
 
 def format_tags(tags_list):
+    if isinstance(tags_list, np.ndarray):
+        tags_list = tags_list.tolist()
     if not isinstance(tags_list, list): return "N/A"
     if not tags_list: return "N/A"
     return " | ".join(f"`{tag}`" for tag in tags_list)
@@ -29,7 +31,7 @@ st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout=
 # --- Load and Prepare Data ---
 df = get_master_dataframe()
 downloads_df = get_downloads_dataframe()
-list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets']
+list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets', 'licenses', 'data_category']
 for col in list_cols:
     if col in df.columns:
         df[col] = df[col].apply(lambda x: list(x) if isinstance(x, np.ndarray) else x if isinstance(x, list) else [])
@@ -45,9 +47,10 @@ st.sidebar.header("Filter Datasets")
 
 search_query = st.sidebar.text_input("Search all fields...", help="Performs a case-insensitive search.", value=','.join(defaults.get('q', [''])))
 FILTERS = [
-    ("Data Type", "data_types"), ("Cancer Type", "cancer_types"),
-    ("Cancer Location", "cancer_locations"), ("Supporting Data", "supporting_data"),
-    ("Program", "program"), ("Access", "access_type")
+    ("Data Type", "data_types"), ("Data Category", "data_category"),
+    ("Cancer Type", "cancer_types"), ("Cancer Location", "cancer_locations"),
+    ("External Resources", "supporting_data"), ("Program", "program"),
+    ("License", "licenses")
 ]
 selected_filters = {}
 for label, column in FILTERS:
@@ -146,7 +149,11 @@ else:
 
         colA, colB = st.columns(2)
         colA.markdown(f"**Data Type(s):** {format_tags(row.get('data_types'))}")
-        colB.markdown(f"**Supporting Data:** {format_tags(row.get('supporting_data'))}")
+        colB.markdown(f"**External Resources:** {format_tags(row.get('supporting_data'))}")
+
+        colC, colD = st.columns(2)
+        colC.markdown(f"**Data Category:** {format_tags(row.get('data_category'))}")
+        colD.markdown(f"**License(s):** {format_tags(row.get('licenses'))}")
 
         st.markdown(f"**Cancer Type(s):** {format_tags(row.get('cancer_types'))}")
         st.markdown(f"**Cancer Location(s):** {format_tags(row.get('cancer_locations'))}")
@@ -160,36 +167,28 @@ else:
                 if row.get('summary'):
                     st.markdown(f"**Abstract:** {row['summary']}")
 
-        download_ids = list(row.get('collection_downloads', [])) + list(row.get('result_downloads', []))
-        # Ensure IDs are strings for comparison, matching the parquet file's likely format
-        download_ids_str = [str(d_id) for d_id in download_ids if d_id]
+        # Link to downloads via parent_id
+        dataset_id = row['id']
+        relevant_downloads = downloads_df[downloads_df['parent_id'] == dataset_id]
 
-        if download_ids_str:
-            # Filter the downloads_df for the relevant IDs
-            relevant_downloads = downloads_df[downloads_df['id'].astype(str).isin(download_ids_str)]
-
-            if not relevant_downloads.empty:
-                with st.expander("View Downloadable Files"):
-                    # Create a display-friendly dataframe
-                    display_downloads = relevant_downloads[['download_title', 'download_size', 'download_size_unit', 'file_type', 'download_url', 'search_url']].copy()
-                    display_downloads.rename(columns={
-                        'download_title': 'Title', 'download_size': 'Size',
-                        'download_size_unit': 'Unit', 'file_type': 'Type',
-                        'download_url': 'Download Link', 'search_url': 'Search Link'
-                    }, inplace=True)
-
+        if not relevant_downloads.empty:
+            with st.expander("View Downloadable Files"):
                     # Generate HTML for the table with clickable links
                     html = "<table>"
-                    html += "<tr><th>Title</th><th>Size</th><th>Type</th><th>Links</th></tr>"
-                    for _, d_row in display_downloads.iterrows():
+                    html += "<tr><th>Title</th><th>Size</th><th>Category</th><th>License</th><th>Links</th></tr>"
+                    for _, d_row in relevant_downloads.iterrows():
                         links = []
-                        if d_row['Download Link']:
-                            links.append(f'<a href="{d_row["Download Link"]}" target="_blank">Download</a>')
-                        if d_row['Search Link']:
-                            links.append(f'<a href="{d_row["Search Link"]}" target="_blank">Search</a>')
+                        if d_row['download_url']:
+                            links.append(f'<a href="{d_row["download_url"]}" target="_blank">Download</a>')
+                        if d_row['search_url']:
+                            links.append(f'<a href="{d_row["search_url"]}" target="_blank">Search</a>')
 
                         links_html = " | ".join(links)
-                        html += f"<tr><td>{d_row['Title']}</td><td>{d_row['Size']} {d_row['Unit']}</td><td>{d_row['Type']}</td><td>{links_html}</td></tr>"
+                        category = format_tags(d_row['download_types'])
+                        license_label = d_row['license_label']
+                        size = f"{d_row['download_size']} {d_row['download_size_unit']}"
+
+                        html += f"<tr><td>{d_row['download_title']}</td><td>{size}</td><td>{category}</td><td>{license_label}</td><td>{links_html}</td></tr>"
                     html += "</table>"
 
                     st.markdown(html, unsafe_allow_html=True)
