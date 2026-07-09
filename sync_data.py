@@ -80,6 +80,14 @@ def main():
         if col in downloads_df.columns:
             downloads_df[col] = downloads_df[col].apply(parse_semicolon_list)
 
+    # Ensure parent_id is present and of a consistent type
+    if 'parent_id' not in downloads_df.columns:
+        print("CRITICAL: 'parent_id' column missing in downloads data. Attempting to derive from raw_json...")
+        def get_parent_id(raw):
+            try: return json.loads(raw).get('parent_id')
+            except: return None
+        downloads_df['parent_id'] = downloads_df['raw_json'].apply(get_parent_id)
+
     # Save downloads cache
     downloads_df.to_parquet(DOWNLOADS_CACHE_FILE, index=False)
     print(f"-> Successfully cached {len(downloads_df)} download records.")

@@ -31,6 +31,20 @@ st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout=
 # --- Load and Prepare Data ---
 df = get_master_dataframe()
 downloads_df = get_downloads_dataframe()
+
+# --- Verify columns exist ---
+required_df_cols = ['id', 'licenses', 'supporting_data', 'data_category', 'data_types', 'program', 'cancer_types', 'cancer_locations']
+required_downloads_cols = ['parent_id', 'download_title', 'download_url', 'search_url', 'download_size', 'download_size_unit', 'download_types', 'license_label']
+
+missing_df = [col for col in required_df_cols if col not in df.columns]
+missing_downloads = [col for col in required_downloads_cols if col not in downloads_df.columns]
+
+if missing_df or missing_downloads:
+    st.error("Data integrity error: The parquet files are missing required columns.")
+    if missing_df: st.info(f"Missing master data columns: {', '.join(missing_df)}")
+    if missing_downloads: st.info(f"Missing downloads data columns: {', '.join(missing_downloads)}")
+    st.warning("This may happen if the app was updated but the data was not re-synced. Please run `python sync_data.py` to refresh your data.")
+    st.stop()
 list_cols = ['cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program', 'related_datasets', 'licenses', 'data_category']
 for col in list_cols:
     if col in df.columns:
