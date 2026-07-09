@@ -1,13 +1,20 @@
-# sync_data.py (Unified + Robust)
 import pandas as pd
-from tcia_utils import wordpress, datacite
-import ast
 import requests
 import os
+import gzip
+import json
+import ast
+
+# --- Configuration ---
+DATASETS_URL = "https://github.com/kirbyju/tcia-query-skill/releases/download/tcia-snapshot-latest/agent_datasets.jsonl.gz"
+DOWNLOADS_URL = "https://github.com/kirbyju/tcia-query-skill/releases/download/tcia-snapshot-latest/agent_current_downloads.jsonl.gz"
+MASTER_DATA_FILE = "tcia_master_data.parquet"
+DOWNLOADS_CACHE_FILE = "downloads_cache.parquet"
+CITATION_CACHE_FILE = "citations_cache.parquet"
 
 # --- Helper Functions ---
 def get_apa_citation(doi):
-    if not doi or pd.isna(doi):
+    if not doi or pd.isna(doi) or doi == 'nan' or doi == '':
         return "No DOI provided."
     url = f"https://citation.crosscite.org/format?doi={doi}&style=apa&lang=en-US"
     headers = {"Accept": "text/x-bibliography"}
@@ -17,191 +24,111 @@ def get_apa_citation(doi):
     except requests.RequestException:
         return f"Could not retrieve citation for DOI: {doi}"
 
-def parse_api_list(value):
+def parse_semicolon_list(value):
+    if not value or pd.isna(value) or value == '':
+        return []
     if isinstance(value, list):
         return value
-    if value is False or value == '' or (isinstance(value, float) and pd.isna(value)) or str(value).lower() == 'false':
-        return []
-    try:
-        parsed = ast.literal_eval(str(value))
-        return parsed if isinstance(parsed, list) else [parsed]
-    except (ValueError, SyntaxError):
-        return [value]
+    # Handle the case where the value might be a JSON-encoded list string (like in downloads)
+    if str(value).startswith('['):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if v]
+        except:
+            pass
+    return [v.strip() for v in str(value).split(';') if v.strip()]
 
-def normalize_wp_title(v):
-    # WordPress commonly returns {'rendered': '...'}
-    if isinstance(v, dict):
-        return v.get('rendered', '')
-    if v is None:
-        return ''
-    if isinstance(v, float) and pd.isna(v):
-        return ''
-    return str(v)
-
-def coalesce(*vals):
-    for v in vals:
-        if v is None:
-            continue
-        if isinstance(v, dict):
-            s = normalize_wp_title(v)
-            if s.strip():
-                return s
-        elif isinstance(v, str):
-            if v.strip():
-                return v
-        else:
-            s = str(v)
-            if s.strip():
-                return s
-    return ''
+def download_and_extract(url, filename):
+    print(f"Downloading {url}...")
+    response = requests.get(url, stream=True)
+    if response.status_code == 200:
+        with open(filename + ".gz", 'wb') as f:
+            f.write(response.content)
+        print(f"Extracting {filename}.gz...")
+        with gzip.open(filename + ".gz", 'rb') as f_in:
+            with open(filename, 'wb') as f_out:
+                f_out.write(f_in.read())
+        os.remove(filename + ".gz")
+    else:
+        raise Exception(f"Failed to download {url}")
 
 def main():
-    MASTER_DATA_FILE = "tcia_master_data.parquet"
-    CITATION_CACHE_FILE = "citations_cache.parquet"
-    DOWNLOADS_CACHE_FILE = "downloads_cache.parquet"
+    print("--- Starting TCIA Data Sync from tcia-query-skill ---")
 
-    print("--- Starting TCIA Data Sync ---")
-    print("Fetching live data...")
     try:
-        raw_collections_df = wordpress.getCollections(format='df')
-        raw_analyses_df = wordpress.getAnalyses(format='df')
-        datacite_df = datacite.getDoi()
-
-        print("Fetching and caching downloads data...")
-        fields = [
-            "id", "date_updated", "download_title", "data_license", "download_access",
-            "data_type", "file_type", "download_size", "download_size_unit", "subjects",
-            "study_count", "series_count", "image_count", "download_type",
-            "download_url", "search_url", "download_file"
-        ]
-        downloads_df = wordpress.getDownloads(format='df', fields=fields)
-
-        # drop download_file column
-        downloads_df = downloads_df.drop(columns=['download_file'])
-        
-        for col in ['download_size', 'data_license', 'download_type', 'subjects', 'study_count',
-                    'series_count', 'image_count', 'data_type', 'file_type']:
-            if col in downloads_df.columns:
-                downloads_df[col] = downloads_df[col].astype(str)
-
-        downloads_df.to_parquet(DOWNLOADS_CACHE_FILE, index=False)
-        print(f"-> Successfully cached {len(downloads_df)} download records.")
-        print("Successfully fetched all data from APIs.")
+        download_and_extract(DATASETS_URL, "agent_datasets.jsonl")
+        download_and_extract(DOWNLOADS_URL, "agent_current_downloads.jsonl")
     except Exception as e:
         print(f"FATAL ERROR: Could not fetch data. Details: {e}")
         return
 
-    print("Processing and standardizing API data...")
+    print("Loading JSONL data...")
+    datasets_df = pd.read_json("agent_datasets.jsonl", lines=True)
+    downloads_df = pd.read_json("agent_current_downloads.jsonl", lines=True)
 
-    # 1) Rename source columns → unified names
-    collection_col_map = {
-        'collection_title': 'title_src',
-        'collection_short_title': 'short_title',
-        'collection_doi': 'doi',
-        'collection_page_accessibility': 'access_type',
-    }
-    analysis_col_map = {
-        'result_title': 'title_src',
-        'result_short_title': 'short_title',
-        'result_doi': 'doi',
-        'result_page_accessibility': 'access_type',
-    }
+    # Cleanup temporary files
+    os.remove("agent_datasets.jsonl")
+    os.remove("agent_current_downloads.jsonl")
 
-    collections_df = raw_collections_df.rename(columns=collection_col_map).copy()
-    analyses_df = raw_analyses_df.rename(columns=analysis_col_map).copy()
+    print(f"Loaded {len(datasets_df)} datasets and {len(downloads_df)} downloads.")
 
-    collections_df['dataset_type'] = 'Collection'
-    analyses_df['dataset_type'] = 'Analysis Result'
+    # --- Process Downloads ---
+    print("Processing downloads...")
+    # Normalize list-like columns in downloads
+    for col in ['download_types', 'external_resources', 'data_types', 'file_types']:
+        if col in downloads_df.columns:
+            downloads_df[col] = downloads_df[col].apply(parse_semicolon_list)
 
-    # 2) Build robust 'title' for each frame:
-    # Prefer explicit *_title fields (now in 'title_src'); fall back to WP core title.rendered, then browse title, then slug.
-    if 'title' not in collections_df.columns:
-        collections_df['title'] = ''
-    collections_df['title'] = collections_df.apply(
-        lambda r: coalesce(
-            r.get('title_src', ''),
-            normalize_wp_title(r.get('title', '')),
-            r.get('collection_browse_title', ''),
-            r.get('slug', '')
-        ),
-        axis=1
-    )
+    # Save downloads cache
+    downloads_df.to_parquet(DOWNLOADS_CACHE_FILE, index=False)
+    print(f"-> Successfully cached {len(downloads_df)} download records.")
 
-    if 'title' not in analyses_df.columns:
-        analyses_df['title'] = ''
-    analyses_df['title'] = analyses_df.apply(
-        lambda r: coalesce(
-            r.get('title_src', ''),
-            normalize_wp_title(r.get('title', '')),
-            r.get('result_browse_title', ''),
-            r.get('slug', '')
-        ),
-        axis=1
-    )
+    # --- Process Datasets ---
+    print("Processing datasets...")
 
-    # 3) Ensure key columns exist and are typed
-    for df in (collections_df, analyses_df):
-        for col in ['short_title', 'access_type', 'doi', 'link']:
-            if col not in df.columns:
-                df[col] = ''
-            df[col] = df[col].astype(str)
+    # Aggregate licenses and external resources from downloads to datasets
+    downloads_agg = downloads_df.groupby('parent_id').agg({
+        'license_label': lambda x: sorted(list(set(filter(None, x)))),
+        'external_resources': lambda x: sorted(list(set([item for sublist in x for item in sublist if item])))
+    }).reset_index().rename(columns={'parent_id': 'id', 'license_label': 'licenses_from_downloads', 'external_resources': 'external_resources_from_downloads'})
 
-        # subjects → number_of_subjects
-        if 'subjects' in df.columns:
-            df['number_of_subjects'] = pd.to_numeric(df['subjects'], errors='coerce').fillna(0).astype(int)
-        else:
-            df['number_of_subjects'] = 0
+    master_df = pd.merge(datasets_df, downloads_agg, on='id', how='left')
 
-        # dates
-        df['date_updated'] = pd.to_datetime(df.get('date_updated', pd.NaT), errors='coerce')
+    # Mapping to final_cols
+    # Final cols in app.py: ['id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
+    # 'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
+    # 'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
+    # 'collection_downloads', 'result_downloads']
 
-    # 4) Concatenate
-    master_df = pd.concat([collections_df, analyses_df], ignore_index=True)
+    # We need to adapt these to the new model
+    master_df['supporting_data'] = master_df['external_resources'].apply(parse_semicolon_list)
+    # If external_resources was empty, try the aggregated one
+    master_df['supporting_data'] = master_df.apply(lambda r: r['supporting_data'] if r['supporting_data'] else r.get('external_resources_from_downloads', []), axis=1)
 
-    # 5) Normalize list-like columns
-    list_cols = [
-        'cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program',
-        'related_collection', 'related_collections', 'related_analysis_results',
-        'collection_downloads', 'result_downloads'
-    ]
-    for col in list_cols:
-        if col in master_df.columns:
-            master_df[col] = master_df[col].apply(parse_api_list)
-        else:
-            master_df[col] = [[] for _ in range(len(master_df))]
+    master_df['cancer_types'] = master_df['cancer_types'].apply(parse_semicolon_list)
+    master_df['cancer_locations'] = master_df['cancer_locations'].apply(parse_semicolon_list)
+    master_df['data_types'] = master_df['data_types'].apply(parse_semicolon_list)
+    master_df['data_category'] = master_df['download_types'].apply(parse_semicolon_list)
 
-    # 6) Related datasets resolution (IDs -> titles)
-    # Build ID -> Title map from finalized titles
-    id_to_title_map = {}
-    for _, row in master_df[['id', 'title']].iterrows():
-        tid = str(row['id'])
-        t = str(row['title']) if pd.notna(row['title']) else ''
-        id_to_title_map[tid] = t if t else f"ID: {tid}"
+    # Program is tricky, let's just use the program_name if it's there
+    def extract_program_name(p):
+        if not p or pd.isna(p): return []
+        if 'program_name:' in str(p):
+            return [str(p).split('program_name:')[1].split(';')[0].strip()]
+        return [str(p).strip()]
 
-    master_df['related_datasets_ids'] = master_df.apply(
-        lambda row: parse_api_list(row.get('related_collection', [])) +
-                    parse_api_list(row.get('related_collections', [])) +
-                    parse_api_list(row.get('related_analysis_results', [])),
-        axis=1
-    )
-    master_df['related_datasets'] = master_df['related_datasets_ids'].apply(
-        lambda ids: sorted([id_to_title_map.get(str(i), f"ID: {i}") for i in ids])
-    )
+    master_df['program'] = master_df['program'].apply(extract_program_name)
 
-    # 7) Merge DataCite abstracts (summary)
-    print("Merging DataCite abstracts...")
-    datacite_df = datacite_df.copy()
-    datacite_df.rename(columns={'DOI': 'doi'}, inplace=True)
-    master_df['doi_lower'] = master_df['doi'].str.lower()
-    datacite_df['doi_lower'] = datacite_df['doi'].str.lower()
-    master_df = pd.merge(
-        master_df,
-        datacite_df[['doi_lower', 'Description']],
-        on='doi_lower',
-        how='left'
-    ).rename(columns={'Description': 'summary'})
+    # Licenses / Access mapping
+    master_df['licenses_list'] = master_df['licenses_from_downloads'].fillna('').apply(lambda x: x if isinstance(x, list) else [])
 
-    # 8) Citations cache
+    # DOI and dates
+    master_df['doi'] = master_df['doi'].astype(str).replace('nan', '')
+    master_df['date_updated'] = pd.to_datetime(master_df['date_updated'], errors='coerce')
+    master_df['number_of_subjects'] = pd.to_numeric(master_df['subjects'], errors='coerce').fillna(0).astype(int)
+
+    # Citation logic
     if os.path.exists(CITATION_CACHE_FILE):
         citations_cache = pd.read_parquet(CITATION_CACHE_FILE)
     else:
@@ -211,7 +138,8 @@ def main():
     master_df['citation'] = master_df['citation'].fillna('')
 
     rows_to_update = master_df[
-        master_df['citation'].str.contains("not found|Could not retrieve|No DOI|^$", na=True)
+        (master_df['doi'] != '') &
+        (master_df['citation'].str.contains("not found|Could not retrieve|No DOI|^$", na=True))
     ]
 
     if not rows_to_update.empty:
@@ -219,52 +147,84 @@ def main():
         new_citations = {}
         for _, row in rows_to_update.iterrows():
             d = row['doi']
-            if isinstance(d, str) and d.strip():
+            if d and d != 'nan':
                 new_citations[d] = get_apa_citation(d)
         if new_citations:
-            master_df['citation'] = master_df['doi'].map(new_citations).fillna(master_df['citation'])
+            # Map new citations back to master_df
+            for doi, cite in new_citations.items():
+                master_df.loc[master_df['doi'] == doi, 'citation'] = cite
+
             new_cache_df = pd.DataFrame(new_citations.items(), columns=['doi', 'citation'])
             updated_cache = pd.concat([citations_cache, new_cache_df]).drop_duplicates(subset='doi', keep='last')
             updated_cache.to_parquet(CITATION_CACHE_FILE, index=False)
             print("Incremental citation fetch complete. Cache updated.")
-        else:
-            print("No valid DOIs to fetch citations for.")
-    else:
-        print("No new citations to fetch.")
 
-    # 9) Final cleanup and save
-    print("\nCleaning data and finalizing master DataFrame...")
-    # Ensure strings where expected
-    for col in ['title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi', 'access_type', 'link']:
-        if col not in master_df.columns:
-            master_df[col] = ''
-        master_df[col] = master_df[col].astype(str).fillna('')
+    # Related datasets resolution (IDs -> titles)
+    # Build ID -> Title map from finalized titles
+    id_to_title_map = {}
+    for _, row in datasets_df[['id', 'title']].iterrows():
+        tid = str(row['id'])
+        t = str(row['title']) if pd.notna(row['title']) else ''
+        id_to_title_map[tid] = t if t else f"ID: {tid}"
 
-    # Numeric/date types
-    master_df['number_of_subjects'] = pd.to_numeric(master_df.get('number_of_subjects', 0), errors='coerce').fillna(0).astype(int)
-    master_df['date_updated'] = pd.to_datetime(master_df.get('date_updated', pd.NaT), errors='coerce')
+    def resolve_related(raw_json_str):
+        try:
+            raw = json.loads(raw_json_str)
+            resolved_titles = []
+            for field in ['related_collection', 'related_collections', 'related_analysis_results']:
+                val = raw.get(field, [])
+                if not isinstance(val, list):
+                    val = [val]
+                for item in val:
+                    if not item or str(item) == 'False':
+                        continue
+                    if isinstance(item, dict):
+                        title = item.get('title') or item.get('collection_title') or item.get('result_title')
+                        if title:
+                            resolved_titles.append(title)
+                        elif 'id' in item:
+                            resolved_titles.append(id_to_title_map.get(str(item['id']), f"ID: {item['id']}"))
+                    else:
+                        resolved_titles.append(id_to_title_map.get(str(item), f"ID: {item}"))
+            return sorted(list(set(resolved_titles)))
+        except:
+            return []
 
-    final_cols = [
-        'id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
-        'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
-        'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
-        'collection_downloads', 'result_downloads'
-    ]
+    master_df['related_datasets'] = master_df['raw_json'].apply(resolve_related)
 
-    # Ensure all final columns exist with appropriate defaults
-    for col in final_cols:
-        if col not in master_df.columns:
-            if col in ['collection_downloads', 'result_downloads', 'related_datasets',
-                       'cancer_types', 'cancer_locations', 'supporting_data', 'data_types', 'program']:
-                master_df[col] = [[] for _ in range(len(master_df))]
-            elif col == 'date_updated':
-                master_df[col] = pd.NaT
-            elif col == 'number_of_subjects':
-                master_df[col] = 0
-            else:
-                master_df[col] = ''
+    # Final selection and renaming to match expected format for app.py
+    final_cols_map = {
+        'id': 'id',
+        'link': 'link',
+        'title': 'title',
+        'short_title': 'short_title',
+        'summary': 'summary',
+        'dataset_type': 'dataset_type',
+        'citation': 'citation',
+        'doi': 'doi',
+        'cancer_types': 'cancer_types',
+        'cancer_locations': 'cancer_locations',
+        'supporting_data': 'supporting_data',
+        'data_types': 'data_types',
+        'data_category': 'data_category',
+        'number_of_subjects': 'number_of_subjects',
+        'date_updated': 'date_updated',
+        'program': 'program',
+        'licenses_list': 'licenses',
+        'related_datasets': 'related_datasets'
+    }
 
-    master_df = master_df[final_cols]
+    master_df = master_df[list(final_cols_map.keys())].rename(columns=final_cols_map)
+
+    # Add empty columns if they are expected by app.py but missing
+    # app.py uses: collection_downloads, result_downloads (these were lists of IDs)
+    # We'll add them as empty lists for now to avoid crashes if app.py still uses them.
+    master_df['collection_downloads'] = [[] for _ in range(len(master_df))]
+    master_df['result_downloads'] = [[] for _ in range(len(master_df))]
+
+    # Also add the old access_type for backward compatibility if needed, though we plan to remove it.
+    master_df['access_type'] = ''
+
     master_df.to_parquet(MASTER_DATA_FILE, index=False)
     print(f"\n--- SUCCESS: Data saved to {MASTER_DATA_FILE} ---")
 
