@@ -1,3 +1,6 @@
 streamlit
 tcia_utils
 pyarrow
+requests
+pandas
+numpy

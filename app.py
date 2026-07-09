@@ -1,9 +1,9 @@
 # app.py (Corrected with robust single-mask filtering)
 import streamlit as st
 import pandas as pd
-from data_loader import get_master_dataframe, get_downloads_dataframe
-import datetime
 import numpy as np
+from data_loader import get_master_dataframe, get_downloads_dataframe, get_mtime, DATA_FILE, DOWNLOADS_FILE
+import datetime
 
 # --- CONFIGURATION ---
 BASE_URL = "https://tcia-streamlit.duckdns.org/dataset-browser/"
@@ -29,8 +29,8 @@ def format_tags(tags_list):
 st.set_page_config(page_title="TCIA Dataset Explorer", page_icon="🔬", layout="wide")
 
 # --- Load and Prepare Data ---
-df = get_master_dataframe()
-downloads_df = get_downloads_dataframe()
+df = get_master_dataframe(get_mtime(DATA_FILE))
+downloads_df = get_downloads_dataframe(get_mtime(DOWNLOADS_FILE))
 
 # --- Verify columns exist ---
 required_df_cols = ['id', 'licenses', 'supporting_data', 'data_category', 'data_types', 'program', 'cancer_types', 'cancer_locations']
