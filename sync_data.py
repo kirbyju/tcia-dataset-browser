@@ -103,12 +103,6 @@ def main():
 
     master_df = pd.merge(datasets_df, downloads_agg, on='id', how='left')
 
-    # Mapping to final_cols
-    # Final cols in app.py: ['id', 'link', 'title', 'short_title', 'summary', 'dataset_type', 'citation', 'doi',
-    # 'cancer_types', 'cancer_locations', 'supporting_data', 'data_types',
-    # 'number_of_subjects', 'date_updated', 'program', 'related_datasets', 'access_type',
-    # 'collection_downloads', 'result_downloads']
-
     # We need to adapt these to the new model
     master_df['supporting_data'] = master_df['external_resources'].apply(parse_semicolon_list)
     # If external_resources was empty, try the aggregated one
@@ -167,35 +161,60 @@ def main():
             updated_cache.to_parquet(CITATION_CACHE_FILE, index=False)
             print("Incremental citation fetch complete. Cache updated.")
 
-    # Related datasets resolution (IDs -> titles)
-    # Build ID -> Title map from finalized titles
-    id_to_title_map = {}
-    for _, row in datasets_df[['id', 'title']].iterrows():
+    # Related datasets resolution (IDs -> titles + URLs)
+    # Build ID -> {title, url} map
+    id_map = {}
+    for _, row in datasets_df.iterrows():
         tid = str(row['id'])
-        t = str(row['title']) if pd.notna(row['title']) else ''
-        id_to_title_map[tid] = t if t else f"ID: {tid}"
+        title = str(row['title']) if pd.notna(row['title']) else f"ID: {tid}"
+        # Priority: doi (converted to link), then link
+        url = row['link']
+        if pd.notna(row['doi']) and str(row['doi']) != '' and str(row['doi']) != 'nan':
+            url = f"https://doi.org/{row['doi']}"
+
+        id_map[tid] = {"title": title, "url": url}
 
     def resolve_related(raw_json_str):
         try:
             raw = json.loads(raw_json_str)
-            resolved_titles = []
+            resolved_links = []
             for field in ['related_collection', 'related_collections', 'related_analysis_results']:
                 val = raw.get(field, [])
                 if not isinstance(val, list):
                     val = [val]
                 for item in val:
-                    if not item or str(item) == 'False':
+                    # Filter out placeholders like 0, False, '0', etc.
+                    if not item or str(item) == 'False' or str(item) == '0':
                         continue
+                    if isinstance(item, dict) and (str(item.get('id')) == '0' or not item.get('id')):
+                        continue
+
+                    target_id = None
+                    target_title = None
+                    target_url = None
+
                     if isinstance(item, dict):
-                        title = item.get('title') or item.get('collection_title') or item.get('result_title')
-                        if title:
-                            resolved_titles.append(title)
-                        elif 'id' in item:
-                            resolved_titles.append(id_to_title_map.get(str(item['id']), f"ID: {item['id']}"))
+                        target_id = str(item.get('id'))
+                        target_title = item.get('title') or item.get('collection_title') or item.get('result_title')
+                        target_url = item.get('url')
                     else:
-                        resolved_titles.append(id_to_title_map.get(str(item), f"ID: {item}"))
-            return sorted(list(set(resolved_titles)))
-        except:
+                        target_id = str(item)
+
+                    # If we have an ID, try to get better info from our map
+                    if target_id and target_id in id_map:
+                        info = id_map[target_id]
+                        target_title = info['title']
+                        target_url = info['url']
+
+                    if target_title and target_url:
+                        resolved_links.append(f"[{target_title}]({target_url})")
+                    elif target_title:
+                        resolved_links.append(target_title)
+                    elif target_id:
+                        resolved_links.append(f"ID: {target_id}")
+
+            return sorted(list(set(resolved_links)))
+        except Exception as e:
             return []
 
     master_df['related_datasets'] = master_df['raw_json'].apply(resolve_related)
@@ -223,14 +242,8 @@ def main():
     }
 
     master_df = master_df[list(final_cols_map.keys())].rename(columns=final_cols_map)
-
-    # Add empty columns if they are expected by app.py but missing
-    # app.py uses: collection_downloads, result_downloads (these were lists of IDs)
-    # We'll add them as empty lists for now to avoid crashes if app.py still uses them.
     master_df['collection_downloads'] = [[] for _ in range(len(master_df))]
     master_df['result_downloads'] = [[] for _ in range(len(master_df))]
-
-    # Also add the old access_type for backward compatibility if needed, though we plan to remove it.
     master_df['access_type'] = ''
 
     master_df.to_parquet(MASTER_DATA_FILE, index=False)
