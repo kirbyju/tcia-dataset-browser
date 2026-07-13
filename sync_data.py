@@ -161,18 +161,43 @@ def main():
             updated_cache.to_parquet(CITATION_CACHE_FILE, index=False)
             print("Incremental citation fetch complete. Cache updated.")
 
-    # Related datasets resolution (IDs -> titles + URLs)
-    # Build ID -> {title, url} map
-    id_map = {}
+    # Related datasets resolution (IDs -> titles + DOI URLs)
+    # Build a comprehensive lookup map indexed by ID, slug, short_title, short_title_key, and full title
+    lookup_map = {}
     for _, row in datasets_df.iterrows():
-        tid = str(row['id'])
-        title = str(row['title']) if pd.notna(row['title']) else f"ID: {tid}"
-        # Priority: doi (converted to link), then link
-        url = row['link']
-        if pd.notna(row['doi']) and str(row['doi']) != '' and str(row['doi']) != 'nan':
-            url = f"https://doi.org/{row['doi']}"
+        doi_val = str(row.get('doi', '')).strip()
+        doi_url = None
+        if doi_val and doi_val.lower() != 'nan' and doi_val != '':
+            if doi_val.startswith('https://doi.org/'):
+                doi_url = doi_val
+            else:
+                doi_url = f"https://doi.org/{doi_val}"
 
-        id_map[tid] = {"title": title, "url": url}
+        info = {
+            "title": str(row.get('title', '')).strip() if pd.notna(row.get('title')) else "",
+            "short_title": str(row.get('short_title', '')).strip() if pd.notna(row.get('short_title')) else "",
+            "doi_url": doi_url
+        }
+
+        keys_to_index = []
+        if pd.notna(row.get('id')):
+            keys_to_index.append(str(row['id']))
+        if pd.notna(row.get('slug')) and str(row['slug']).strip():
+            keys_to_index.append(str(row['slug']).strip())
+            keys_to_index.append(str(row['slug']).strip().lower())
+        if pd.notna(row.get('short_title')) and str(row['short_title']).strip():
+            keys_to_index.append(str(row['short_title']).strip())
+            keys_to_index.append(str(row['short_title']).strip().lower())
+        if pd.notna(row.get('short_title_key')) and str(row['short_title_key']).strip():
+            keys_to_index.append(str(row['short_title_key']).strip())
+            keys_to_index.append(str(row['short_title_key']).strip().lower())
+        if pd.notna(row.get('title')) and str(row['title']).strip():
+            keys_to_index.append(str(row['title']).strip())
+            keys_to_index.append(str(row['title']).strip().lower())
+
+        for k in set(keys_to_index):
+            if k:
+                lookup_map[k] = info
 
     def resolve_related(raw_json_str):
         try:
@@ -180,38 +205,77 @@ def main():
             resolved_links = []
             for field in ['related_collection', 'related_collections', 'related_analysis_results']:
                 val = raw.get(field, [])
+                if val is None:
+                    continue
                 if not isinstance(val, list):
                     val = [val]
                 for item in val:
                     # Filter out placeholders like 0, False, '0', etc.
                     if not item or str(item) == 'False' or str(item) == '0':
                         continue
-                    if isinstance(item, dict) and (str(item.get('id')) == '0' or not item.get('id')):
-                        continue
+                    if isinstance(item, dict):
+                        # Filter out dict placeholders like {'id': 0, 'title': '', 'url': False}
+                        item_id = item.get('id')
+                        if not item_id or str(item_id) == '0' or str(item_id) == 'False':
+                            continue
 
                     target_id = None
                     target_title = None
                     target_url = None
 
                     if isinstance(item, dict):
-                        target_id = str(item.get('id'))
+                        target_id = str(item.get('id')) if item.get('id') is not None else None
                         target_title = item.get('title') or item.get('collection_title') or item.get('result_title')
-                        target_url = item.get('url')
+                        # Only use DOI URLs per instructions. But if the item itself has url, we can check if it has a DOI.
+                        item_url = item.get('url')
+                        if item_url and ('doi.org' in str(item_url)):
+                            target_url = item_url
                     else:
                         target_id = str(item)
 
-                    # If we have an ID, try to get better info from our map
-                    if target_id and target_id in id_map:
-                        info = id_map[target_id]
-                        target_title = info['title']
-                        target_url = info['url']
+                    # Now try to find a match in our lookup_map
+                    matched_info = None
+                    # Try lookup by target_id (and its lowercased version)
+                    if target_id:
+                        tid_clean = target_id.strip()
+                        if tid_clean in lookup_map:
+                            matched_info = lookup_map[tid_clean]
+                        elif tid_clean.lower() in lookup_map:
+                            matched_info = lookup_map[tid_clean.lower()]
 
-                    if target_title and target_url:
+                    # If not matched, and item is a dict, try lookup by its title/label fields
+                    if not matched_info and isinstance(item, dict):
+                        for title_key in ['title', 'collection_title', 'result_title']:
+                            t_val = item.get(title_key)
+                            if t_val:
+                                t_clean = str(t_val).strip()
+                                if t_clean in lookup_map:
+                                    matched_info = lookup_map[t_clean]
+                                    break
+                                elif t_clean.lower() in lookup_map:
+                                    matched_info = lookup_map[t_clean.lower()]
+                                    break
+
+                    # If we found matched_info, we use its title and doi_url
+                    if matched_info:
+                        if matched_info['title']:
+                            target_title = matched_info['title']
+                        elif matched_info['short_title']:
+                            target_title = matched_info['short_title']
+
+                        if matched_info['doi_url']:
+                            target_url = matched_info['doi_url']
+
+                    # Rely strictly on the DOI URL as requested. If we have target_url (and it's a DOI URL), format as Markdown link.
+                    if target_title and target_url and ('doi.org' in str(target_url)):
                         resolved_links.append(f"[{target_title}]({target_url})")
                     elif target_title:
                         resolved_links.append(target_title)
                     elif target_id:
-                        resolved_links.append(f"ID: {target_id}")
+                        if target_id.isdigit():
+                            resolved_links.append(f"ID: {target_id}")
+                        else:
+                            resolved_links.append(target_id)
 
             return sorted(list(set(resolved_links)))
         except Exception as e:
